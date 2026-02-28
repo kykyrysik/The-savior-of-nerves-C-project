@@ -1,0 +1,152 @@
+#include <windows.h>
+#include <iostream>
+#include <string>
+#include <map>
+#include <locale.h>
+
+// Карта для букв (только латиница, строчные)
+const std::map<wchar_t, wchar_t> baseMap = {
+    {L'q', L'й'}, {L'w', L'ц'}, {L'e', L'у'}, {L'r', L'к'}, {L't', L'е'}, {L'y', L'н'},
+    {L'u', L'г'}, {L'i', L'ш'}, {L'o', L'щ'}, {L'p', L'з'},
+    {L'a', L'ф'}, {L's', L'ы'}, {L'd', L'в'}, {L'f', L'а'}, {L'g', L'п'}, {L'h', L'р'},
+    {L'j', L'о'}, {L'k', L'л'}, {L'l', L'д'},
+    {L'z', L'я'}, {L'x', L'ч'}, {L'c', L'с'}, {L'v', L'м'}, {L'b', L'и'}, {L'n', L'т'},
+    {L'm', L'ь'}
+};
+
+// Карта для знаков (все не-буквы)
+const std::map<wchar_t, wchar_t> signMap = {
+    // Знаки с Shift
+    {L'^', L':'}, {L'@', L'"'}, {L'#', L'№'}, {L'$', L';'}, {L'&', L'?'}, {L'`', L'ё'},
+    {L'~', L'Ё'}, {L':', L'Ж'}, {L'<', L'Б'}, {L'>', L'Ю'}, {L'{', L'Х'}, {L'}', L'Ъ'},
+    {L'?', L','}, {L'"', L'Э'}, {L'\'', L'э'},
+    // Типографские кавычки
+    {L'“', L'Э'}, {L'”', L'Э'}, {L'‘', L'э'}, {L'’', L'э'},
+    // Знаки без Shift
+    {L',', L'б'}, {L'.', L'ю'}, {L'/', L'.'},
+    // Добавленные символы (не буквы, но были в baseMap)
+    {L';', L'ж'},
+    {L'[', L'х'},
+    {L']', L'ъ'}
+};
+
+std::wstring ConvertLayout(const std::wstring& input) {
+    std::wstring output;
+    output.reserve(input.size());
+
+    for (wchar_t c : input) {
+        if (iswalpha(c)) { // буква
+            wchar_t lower_c = towlower(c);
+            auto it = baseMap.find(lower_c);
+            if (it != baseMap.end()) {
+                wchar_t ru_char = it->second; // строчная русская буква
+                // Проверка на заглавность (для латиницы)
+                bool isUpper = (c >= L'A' && c <= L'Z');
+                if (isUpper) {
+                    ru_char = towupper(ru_char);
+                }
+                output += ru_char;
+            }
+            else {
+                output += c; // незнакомая буква
+            }
+        }
+        else { // не буква
+            auto it = signMap.find(c);
+            if (it != signMap.end()) {
+                output += it->second;
+            }
+            else {
+                output += c;
+            }
+        }
+    }
+    return output;
+}
+
+void PasteFromClipboard() {
+    Sleep(200);
+    keybd_event(VK_CONTROL, 0, 0, 0);
+    keybd_event('V', 0, 0, 0);
+    keybd_event('V', 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+}
+
+std::wstring GetClipboardText() {
+    if (!OpenClipboard(nullptr)) return L"";
+    HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+    if (hData == nullptr) { CloseClipboard(); return L""; }
+    wchar_t* pszText = static_cast<wchar_t*>(GlobalLock(hData));
+    if (pszText == nullptr) { CloseClipboard(); return L""; }
+    std::wstring text(pszText);
+    GlobalUnlock(hData);
+    CloseClipboard();
+    return text;
+}
+
+void SetClipboardText(const std::wstring& text) {
+    if (!OpenClipboard(nullptr)) return;
+    EmptyClipboard();
+    size_t sizeInBytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, sizeInBytes);
+    if (hGlobal == nullptr) { CloseClipboard(); return; }
+    wchar_t* pGlobal = static_cast<wchar_t*>(GlobalLock(hGlobal));
+    wcscpy_s(pGlobal, text.size() + 1, text.c_str());
+    GlobalUnlock(pGlobal);
+    SetClipboardData(CF_UNICODETEXT, hGlobal);
+    CloseClipboard();
+}
+
+void SwitchToRussianLayout() {
+    HWND hWnd = GetForegroundWindow();
+    if (!hWnd) return;
+    HKL hklRussian = LoadKeyboardLayout(L"00000419", KLF_ACTIVATE);
+    if (hklRussian) {
+        PostMessage(hWnd, WM_INPUTLANGCHANGEREQUEST, 0, (LPARAM)hklRussian);
+    }
+}
+
+HHOOK keyboardHook;
+const int HOTKEY_VK = 45; // Insert
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && wParam == WM_KEYDOWN) {
+        KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
+        if (p->vkCode == HOTKEY_VK) {
+            Sleep(200);
+            keybd_event(VK_CONTROL, 0, 0, 0);
+            keybd_event('C', 0, 0, 0);
+            keybd_event('C', 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+            Sleep(500);
+
+            std::wstring selectedText = GetClipboardText();
+            if (!selectedText.empty()) {
+                std::wstring convertedText = ConvertLayout(selectedText);
+                SetClipboardText(convertedText);
+                Sleep(200);
+                PasteFromClipboard();
+                SwitchToRussianLayout();
+            }
+            return 1;
+        }
+    }
+    return CallNextHookEx(keyboardHook, nCode, wParam, lParam);
+}
+
+int main() {
+    setlocale(LC_ALL, "");
+    std::cout << "Program started. Press Insert to convert selected text and switch to Russian layout." << std::endl;
+    keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+    if (keyboardHook == NULL) {
+        std::cerr << "Failed to install keyboard hook!" << std::endl;
+        return 1;
+    }
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    UnhookWindowsHookEx(keyboardHook);
+    return 0;
+}
