@@ -1,0 +1,111 @@
+#include <windows.h>
+#include <iostream>
+#include <string>
+#include <map>
+#include <algorithm>
+
+const std::map<char, char> enToRuMap = {
+    {'q', 'й'}, {'w', 'ц'}, {'e', 'у'}, {'r', 'к'}, {'t', 'е'}, {'y', 'н'},
+    {'u', 'г'}, {'i', 'ш'}, {'o', 'щ'}, {'p', 'з'}, {'[', 'х'}, {']', 'ъ'},
+    {'a', 'ф'}, {'s', 'ы'}, {'d', 'в'}, {'f', 'а'}, {'g', 'п'}, {'h', 'р'},
+    {'j', 'о'}, {'k', 'л'}, {'l', 'д'}, {';', 'ж'}, {'\'', 'э'},
+    {'z', 'я'}, {'x', 'ч'}, {'c', 'с'}, {'v', 'м'}, {'b', 'и'}, {'n', 'т'},
+    {'m', 'ь'}, {',', 'б'}, {'.', 'ю'}, {'/', '.'}
+};
+
+std::string ConvertLayout(const std::string& input) {
+    std::string output;
+    output.reserve(input.size());
+    for (char c : input) {
+        char lower_c = tolower(c);
+        auto it = enToRuMap.find(lower_c);
+        if (it != enToRuMap.end()) {
+            char ru_char = it->second;
+            if (isupper(c)) ru_char = toupper(ru_char);
+            output += ru_char;
+        }
+        else {
+            output += c;
+        }
+    }
+    return output;
+}
+
+void PasteFromClipboard() {
+    Sleep(200);
+    keybd_event(VK_CONTROL, 0, 0, 0);
+    keybd_event('V', 0, 0, 0);
+    keybd_event('V', 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+}
+
+std::string GetClipboardText() {
+    if (!OpenClipboard(nullptr)) return "";
+    HANDLE hData = GetClipboardData(CF_TEXT);
+    if (hData == nullptr) { CloseClipboard(); return ""; }
+    char* pszText = static_cast<char*>(GlobalLock(hData));
+    if (pszText == nullptr) { CloseClipboard(); return ""; }
+    std::string text(pszText);
+    GlobalUnlock(hData);
+    CloseClipboard();
+    return text;
+}
+
+void SetClipboardText(const std::string& text) {
+    if (!OpenClipboard(nullptr)) return;
+    EmptyClipboard();
+    HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+    if (hGlobal == nullptr) { CloseClipboard(); return; }
+    char* pGlobal = static_cast<char*>(GlobalLock(hGlobal));
+    strcpy_s(pGlobal, text.size() + 1, text.c_str());
+    GlobalUnlock(hGlobal);
+    SetClipboardData(CF_TEXT, hGlobal);
+    CloseClipboard();
+}
+
+HHOOK keyboardHook;
+// если хочешь выбрать другую клавишу вставь вместо 45 свой номер
+const int HOTKEY_VK = 45;
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && wParam == WM_KEYDOWN) {
+        KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
+        if (p->vkCode == HOTKEY_VK) {
+            // Никаких дополнительных модификаторов
+            std::cout << "Hotkey pressed (Insert)" << std::endl;
+
+            Sleep(200);
+            keybd_event(VK_CONTROL, 0, 0, 0);
+            keybd_event('C', 0, 0, 0);
+            keybd_event('C', 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+            Sleep(500);
+
+            std::string selectedText = GetClipboardText();
+            if (!selectedText.empty()) {
+                std::string convertedText = ConvertLayout(selectedText);
+                SetClipboardText(convertedText);
+                Sleep(200);
+                PasteFromClipboard();
+            }
+            return 1; // блокируем клавишу
+        }
+    }
+    return CallNextHookEx(keyboardHook, nCode, wParam, lParam);
+}
+
+int main() {
+    std::cout << "Program started. Press Insert to convert selected text." << std::endl;
+    keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+    if (keyboardHook == NULL) {
+        std::cerr << "Failed to install hook!" << std::endl;
+        return 1;
+    }
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+    UnhookWindowsHookEx(keyboardHook);
+    return 0;
+}
