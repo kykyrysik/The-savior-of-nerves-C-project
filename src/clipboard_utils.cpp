@@ -1,6 +1,7 @@
 #include "clipboard_utils.h"
 #include <windows.h>
 
+// Hello test
 void PasteFromClipboard() {
     Sleep(100);
     keybd_event(VK_CONTROL, 0, 0, 0);
